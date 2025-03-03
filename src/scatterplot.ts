@@ -1,25 +1,36 @@
 import { processColors, processPoints, processSizes } from "@/data";
-
 import { TPoints, TParams } from "@/types";
-import { BufferManager } from "@/manager/bufferManager";
-import { GPUManager } from "@/manager/gpuManager";
+import { GPUHandler, BufferHandler, InteractionHandler } from "@/handler";
 
 export class Scatterplot {
   private canvas: HTMLCanvasElement;
-  private gpu: GPUManager;
-  private buffer!: BufferManager;
+  private gpu: GPUHandler;
+  private buffer!: BufferHandler;
+  private interaction!: InteractionHandler;
   private pointCount: number = 0;
+  private transform: { scale: number; x: number; y: number } = {
+    scale: 1.0,
+    x: 0.0,
+    y: 0.0,
+  };
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
-    this.gpu = new GPUManager(canvas);
+    this.gpu = new GPUHandler(canvas);
   }
 
   async init() {
     await this.gpu.init();
-    this.buffer = new BufferManager(this.gpu.device);
+    this.buffer = new BufferHandler(this.gpu.device);
     this.initBuffers();
     this.createBindGroup();
+
+    new InteractionHandler(
+      this.canvas,
+      (scale, mousePos) => this.handleZoom(scale, mousePos),
+      (translate) => this.handlePan(translate),
+      () => this.handleReset() // 🎯 Reset 이벤트 연결
+    );
   }
 
   private initBuffers() {
@@ -33,6 +44,15 @@ export class Scatterplot {
       new Float32Array([-0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5]),
       GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     );
+    this.buffer.createBuffer(
+      "transform",
+      new Float32Array([
+        this.transform.scale,
+        this.transform.x,
+        this.transform.y,
+      ]),
+      GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    );
   }
 
   private createBindGroup() {
@@ -45,6 +65,7 @@ export class Scatterplot {
           binding: 0,
           resource: { buffer: this.buffer.buffers.canvasSize },
         },
+        { binding: 1, resource: { buffer: this.buffer.buffers.transform } },
       ],
     });
   }
@@ -110,6 +131,57 @@ export class Scatterplot {
     );
 
     this.pointCount = pointArray.length / 2;
+  }
+
+  private handleZoom(scale: number, mousePos: { x: number; y: number }) {
+    this.transform.scale *= scale;
+
+    // 🎯 마우스 위치 기준으로 이동 (Semantic Zoom 효과)
+    this.transform.x = mousePos.x - (mousePos.x - this.transform.x) * scale;
+    this.transform.y = mousePos.y - (mousePos.y - this.transform.y) * scale;
+    this.updateTransformBuffer();
+    this.render();
+  }
+
+  private handlePan(translate: { x: number; y: number }) {
+    const scaleFactor = this.transform.scale;
+
+    // Normalize translation to clip space with scale factor adjustment
+    this.transform.x += ((translate.x / this.canvas.width) * 2.0) / scaleFactor;
+    this.transform.y -=
+      ((translate.y / this.canvas.height) * 2.0) / scaleFactor;
+
+    this.updateTransformBuffer();
+    this.render();
+  }
+
+  private handleReset() {
+    // 🎯 Zoom & Pan 초기화
+    this.transform.scale = 1.0;
+    this.transform.x = 0.0;
+    this.transform.y = 0.0;
+
+    // 🎯 WebGPU Transform Buffer 업데이트
+    this.updateTransformBuffer();
+
+    // 🎯 Re-render
+    this.render();
+  }
+
+  private updateTransformBuffer() {
+    if (!this.gpu.device) return;
+
+    const transformData = new Float32Array([
+      this.transform.scale,
+      this.transform.x,
+      this.transform.y,
+    ]);
+
+    this.gpu.device.queue.writeBuffer(
+      this.buffer.buffers.transform,
+      0,
+      transformData
+    );
   }
 
   render() {

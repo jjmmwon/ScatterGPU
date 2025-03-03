@@ -23,7 +23,14 @@ struct CanvasSize {
   height: f32,
 };
 
+struct Transform {
+  scale: f32,
+  translateX: f32,
+  translateY: f32,
+};
+
 @group(0) @binding(0) var<uniform> canvas: CanvasSize;
+@group(0) @binding(1) var<uniform> transform: Transform;
 
 @vertex
 fn vs_main(instance: InstanceData, quad: QuadVertex) -> VertexOutput {
@@ -35,7 +42,9 @@ fn vs_main(instance: InstanceData, quad: QuadVertex) -> VertexOutput {
 
     // 🎯 크기 조정 후 오프셋 적용
     let scaledOffset = quad.offset * size_clip;
-    let pos = instance.position + scaledOffset;
+    let pos = (instance.position * transform.scale) + vec2<f32>(transform.translateX, transform.translateY) + scaledOffset;
+
+
 
     // 정규화된 클립 공간 좌표로 변환
     output.position = vec4<f32>(pos, 0.0, 1.0);

@@ -2,8 +2,27 @@ export async function createPipeline(
   device: GPUDevice,
   format: GPUTextureFormat
 ) {
+  const bindGroupLayout = device.createBindGroupLayout({
+    entries: [
+      {
+        binding: 0,
+        visibility: GPUShaderStage.VERTEX,
+        buffer: { type: "uniform" },
+      },
+      {
+        binding: 1,
+        visibility: GPUShaderStage.VERTEX,
+        buffer: { type: "uniform" },
+      },
+    ],
+  });
+
+  const pipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [bindGroupLayout],
+  });
+
   return device.createRenderPipeline({
-    layout: "auto",
+    layout: pipelineLayout,
     vertex: {
       module: device.createShaderModule({
         code: await (await fetch("/src/core/shaders.wgsl")).text(),

@@ -1,100 +1,52 @@
-import { initWebGPU, createPipeline } from "@/core";
 import { processColors, processPoints, processSizes } from "@/data";
 
 import { TPoints, TParams } from "@/types";
+import { BufferManager } from "@/manager/bufferManager";
+import { GPUManager } from "@/manager/gpuManager";
 
 export class Scatterplot {
   private canvas: HTMLCanvasElement;
-
-  private gpu: {
-    device: GPUDevice | null;
-    context: GPUCanvasContext | null;
-    pipeline: GPURenderPipeline | null;
-    bindGroup: GPUBindGroup | null;
-  } = { device: null, context: null, pipeline: null, bindGroup: null };
-
-  private buffers: Record<string, GPUBuffer> = {};
+  private gpu: GPUManager;
+  private buffer!: BufferManager;
   private pointCount: number = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
+    this.gpu = new GPUManager(canvas);
   }
 
   async init() {
-    const { device, context } = await initWebGPU(this.canvas);
-    this.gpu.device = device;
-    this.gpu.context = context;
-    this.gpu.pipeline = await createPipeline(
-      device,
-      navigator.gpu.getPreferredCanvasFormat()
-    );
-    console.log("Scatterplot initialized with WebGPU.");
-    this.initCanvasSizeBuffer();
-    this.initOffsetBuffer();
+    await this.gpu.init();
+    this.buffer = new BufferManager(this.gpu.device);
+    this.initBuffers();
     this.createBindGroup();
   }
 
-  private initCanvasSizeBuffer() {
-    if (!this.gpu.device) return;
-
-    const canvasSize = new Float32Array([
-      this.canvas.width,
-      this.canvas.height,
-    ]);
-
-    this.buffers.canvasSize = this.gpu.device.createBuffer({
-      size: canvasSize.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    this.updateCanvasSize();
-  }
-
-  private updateCanvasSize() {
-    if (!this.gpu.device || !this.buffers.canvasSize) return;
-
-    const canvasSize = new Float32Array([
-      this.canvas.width,
-      this.canvas.height,
-    ]);
-    this.gpu.device.queue.writeBuffer(this.buffers.canvasSize, 0, canvasSize);
+  private initBuffers() {
+    this.buffer.createBuffer(
+      "canvasSize",
+      new Float32Array([this.canvas.width, this.canvas.height]),
+      GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    );
+    this.buffer.createBuffer(
+      "offset",
+      new Float32Array([-0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5]),
+      GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    );
   }
 
   private createBindGroup() {
-    if (!this.gpu.device || !this.buffers.canvasSize) return;
+    if (!this.gpu.device || !this.buffer.buffers.canvasSize) return;
 
     this.gpu.bindGroup = this.gpu.device.createBindGroup({
       layout: this.gpu.pipeline!.getBindGroupLayout(0),
       entries: [
         {
           binding: 0,
-          resource: { buffer: this.buffers.canvasSize },
+          resource: { buffer: this.buffer.buffers.canvasSize },
         },
       ],
     });
-  }
-
-  private initOffsetBuffer() {
-    const quadOffsets = new Float32Array([
-      -0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5,
-    ]);
-
-    this.buffers.offset = this.gpu.device!.createBuffer({
-      size: quadOffsets.byteLength,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-
-    this.gpu.device!.queue.writeBuffer(this.buffers.offset, 0, quadOffsets);
-  }
-
-  private createBuffer(data: Float32Array): GPUBuffer {
-    const buffer = this.gpu.device!.createBuffer({
-      size: data.byteLength,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-
-    this.gpu.device!.queue.writeBuffer(buffer, 0, data);
-    return buffer;
   }
 
   setData(
@@ -130,13 +82,32 @@ export class Scatterplot {
       Array(pointArray.length / 2).fill(strokeWidths)
     );
 
-    this.buffers.vertex = this.createBuffer(pointArray);
-    this.buffers.color = this.createBuffer(colorData);
-    this.buffers.size = this.createBuffer(sizeData);
-    this.buffers.strokeColor = this.createBuffer(strokeColorData);
-    this.buffers.strokeWidth = this.createBuffer(strokeWidthData);
+    this.buffer.createBuffer(
+      "vertex",
+      pointArray,
+      GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    );
 
-    this.updateCanvasSize();
+    this.buffer.createBuffer(
+      "color",
+      colorData,
+      GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    );
+    this.buffer.createBuffer(
+      "size",
+      sizeData,
+      GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    );
+    this.buffer.createBuffer(
+      "strokeColor",
+      strokeColorData,
+      GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    );
+    this.buffer.createBuffer(
+      "strokeWidth",
+      strokeWidthData,
+      GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    );
 
     this.pointCount = pointArray.length / 2;
   }
@@ -161,12 +132,12 @@ export class Scatterplot {
 
     passEncoder.setPipeline(this.gpu.pipeline!);
     passEncoder.setBindGroup(0, this.gpu.bindGroup!);
-    passEncoder.setVertexBuffer(0, this.buffers.vertex);
-    passEncoder.setVertexBuffer(1, this.buffers.color);
-    passEncoder.setVertexBuffer(2, this.buffers.size);
-    passEncoder.setVertexBuffer(3, this.buffers.strokeColor);
-    passEncoder.setVertexBuffer(4, this.buffers.strokeWidth);
-    passEncoder.setVertexBuffer(5, this.buffers.offset);
+    passEncoder.setVertexBuffer(0, this.buffer.buffers.vertex);
+    passEncoder.setVertexBuffer(1, this.buffer.buffers.color);
+    passEncoder.setVertexBuffer(2, this.buffer.buffers.size);
+    passEncoder.setVertexBuffer(3, this.buffer.buffers.strokeColor);
+    passEncoder.setVertexBuffer(4, this.buffer.buffers.strokeWidth);
+    passEncoder.setVertexBuffer(5, this.buffer.buffers.offset);
     passEncoder.draw(4, this.pointCount);
     passEncoder.end();
 

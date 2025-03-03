@@ -1,6 +1,6 @@
 import { createPipeline, initWebGPU } from "@/core";
 
-export class GPUManager {
+export class GPUHandler {
   public device!: GPUDevice;
   public context!: GPUCanvasContext;
   public pipeline!: GPURenderPipeline;
